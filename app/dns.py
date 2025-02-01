@@ -4,6 +4,7 @@ import struct
 class DNSMessage:
     # Packet Identifier
     ID = 1234
+
     # Query/Response Indicator (QR)
     # 1 for a reply packet, 0 for a question packet.
     # Since we're yielding replies, we keep this as 1.
@@ -11,13 +12,17 @@ class DNSMessage:
 
     # 1 stands for a host address question type (type A)
     # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.2
-    QUESTION_TYPE = 1
+    TYPE = 1
 
     # 1 stands for the internet (class IN)
     # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.4
-    QUESTION_CLASS = 1
+    CLASS = 1
 
-    def create_header(self, question_count: int) -> bytes:
+    # The duration in seconds a record can be cached before requerying.
+    # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.1
+    TTL = 60
+
+    def create_header(self, question_count: int, answer_count: int) -> bytes:
         """
         Creates a 12-byte DNS header with the specified fields.
         All integers are encoded in big-endian format.
@@ -56,7 +61,7 @@ class DNSMessage:
 
         # Next four 16-bit fields
         qdcount = question_count  # Question Count
-        ancount = 0  # Answer Record Count
+        ancount = answer_count  # Answer Record Count
         nscount = 0  # Authority Record Count
         arcount = 0  # Additional Record Count
 
@@ -80,13 +85,37 @@ class DNSMessage:
         # For now we'll keep a hardcoded question
         question = "codecrafters.io"
 
-        name = ""
-        for label in question.split("."):
-            length = chr(len(label))
-            name += f"{length}{label}"
-        name += "\x00"
+        name = self._as_label_sequence(question)
 
-        question_type = int(self.QUESTION_TYPE).to_bytes(length=2).decode()
-        question_class = int(self.QUESTION_CLASS).to_bytes(length=2).decode()
+        question_type = self._as_string_of_bytes(self.TYPE, length=2)
+        question_class = self._as_string_of_bytes(self.CLASS, length=2)
 
         return name + question_type + question_class
+
+    def create_answer(self) -> str:
+        # For now we'll keep a hardcoded answer
+        answer = "codecrafters.io"
+
+        name = self._as_label_sequence(answer)
+
+        answer_type = self._as_string_of_bytes(self.TYPE, length=2)
+        answer_class = self._as_string_of_bytes(self.CLASS, length=2)
+        ttl = self._as_string_of_bytes(60, length=4)
+
+        # For now we'll keep a hardcoded IP address
+        ip_address = "8.8.8.8"
+        data = "".join([chr(int(piece)) for piece in ip_address.split(".")])
+        length = self._as_string_of_bytes(len(data), length=2)
+
+        return name + answer_type + answer_class + ttl + length + data
+
+    def _as_label_sequence(self, name: str) -> str:
+        result = ""
+        for label in name.split("."):
+            length = chr(len(label))
+            result += f"{length}{label}"
+        result += "\x00"
+        return result
+
+    def _as_string_of_bytes(self, number: int, length: int) -> str:
+        return number.to_bytes(length=length).decode()

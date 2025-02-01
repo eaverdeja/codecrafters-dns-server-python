@@ -17,9 +17,11 @@ def main():
             buf, source = udp_socket.recvfrom(512)
 
             message = DNSMessage()
-            header = message.create_header(question_count=1)
+            header = message.create_header(question_count=1, answer_count=1)
             question = message.create_question()
-            response = header + question.encode()
+            answer = message.create_answer()
+
+            response = header + question.encode() + answer.encode()
 
             udp_socket.sendto(response, source)
         except Exception as e:
