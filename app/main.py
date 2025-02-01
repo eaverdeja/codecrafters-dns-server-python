@@ -17,9 +17,13 @@ def main():
             buf, source = udp_socket.recvfrom(512)
             # The DNS packet header is always 12 bytes in length
             header = buf[:12]
+            data = buf[12:]
 
             query_header = DNSMessage.parse_header(header)
-            message = DNSMessage(packet_id=query_header.packet_id)
+            domain_name = DNSMessage.parse_question(data)
+            message = DNSMessage(
+                packet_id=query_header.packet_id, domain_name=domain_name
+            )
 
             response_header = message.create_header(
                 query_header, question_count=1, answer_count=1

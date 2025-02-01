@@ -33,8 +33,9 @@ class DNSMessage:
 
     HEADER_FORMAT = "!HBBHHHH"
 
-    def __init__(self, packet_id: int):
+    def __init__(self, packet_id: int, domain_name: str):
         self.ID = packet_id
+        self.domain_name = domain_name
 
     def create_header(
         self, query_header: DNSHeader, question_count: int, answer_count: int
@@ -104,10 +105,7 @@ class DNSMessage:
         )
 
     def create_question(self) -> str:
-        # For now we'll keep a hardcoded question
-        question = "codecrafters.io"
-
-        name = self._as_label_sequence(question)
+        name = self._as_label_sequence(self.domain_name)
 
         question_type = self._as_string_of_bytes(self.TYPE, length=2)
         question_class = self._as_string_of_bytes(self.CLASS, length=2)
@@ -115,10 +113,7 @@ class DNSMessage:
         return name + question_type + question_class
 
     def create_answer(self) -> str:
-        # For now we'll keep a hardcoded answer
-        answer = "codecrafters.io"
-
-        name = self._as_label_sequence(answer)
+        name = self._as_label_sequence(self.domain_name)
 
         answer_type = self._as_string_of_bytes(self.TYPE, length=2)
         answer_class = self._as_string_of_bytes(self.CLASS, length=2)
@@ -150,6 +145,18 @@ class DNSMessage:
             recursion_desired=rd_bit,
             response_code=rcode,
         )
+
+    @classmethod
+    def parse_question(cls, question: bytes) -> str:
+        pieces = []
+        bytes_read = 0
+        while (length := question[bytes_read]) != 0:
+            bytes_read += 1
+            data = question[bytes_read : bytes_read + length]
+            pieces.append(data.decode())
+            bytes_read += length
+
+        return ".".join(pieces)
 
     def _as_label_sequence(self, name: str) -> str:
         result = ""
