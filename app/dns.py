@@ -1,9 +1,18 @@
 import struct
+from dataclasses import dataclass
+
+
+@dataclass
+class DNSHeader:
+    packet_id: int
+    operation_code: int
+    recursion_desired: int
+    response_code: int
 
 
 class DNSMessage:
     # Packet Identifier
-    ID = 1234
+    ID: int
 
     # Query/Response Indicator (QR)
     # 1 for a reply packet, 0 for a question packet.
@@ -22,7 +31,14 @@ class DNSMessage:
     # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.1
     TTL = 60
 
-    def create_header(self, question_count: int, answer_count: int) -> bytes:
+    HEADER_FORMAT = "!HBBHHHH"
+
+    def __init__(self, packet_id: int):
+        self.ID = packet_id
+
+    def create_header(
+        self, query_header: DNSHeader, question_count: int, answer_count: int
+    ) -> bytes:
         """
         Creates a 12-byte DNS header with the specified fields.
         All integers are encoded in big-endian format.
@@ -51,13 +67,19 @@ class DNSMessage:
         # --------  OR them together (|)
         # 10001111  = 143 in decimal
         #
-        flags1 = (self.QR << 7) | (0 << 3) | (0 << 2) | (0 << 1) | 0
+        flags1 = (
+            (self.QR << 7)
+            | (query_header.operation_code << 3)
+            | (0 << 2)
+            | (0 << 1)
+            | query_header.recursion_desired
+        )
 
         # 2nd flag - 8 bits
         # RA (1 bit): 0
         # Z (3 bits): 0
         # RCODE (4 bits): 0
-        flags2 = (0 << 7) | (0)
+        flags2 = (0 << 7) | query_header.response_code
 
         # Next four 16-bit fields
         qdcount = question_count  # Question Count
@@ -71,7 +93,7 @@ class DNSMessage:
         # 'BB' means two 8-bit unsigned chars (for the flags)
         # HBBHHHH = H + 2B + 4H = 2*1 + 5*2 = 12 bytes
         return struct.pack(
-            "!HBBHHHH",
+            self.HEADER_FORMAT,
             self.ID,  # 16 bits
             flags1,  # 8 bits
             flags2,  # 8 bits
@@ -108,6 +130,26 @@ class DNSMessage:
         length = self._as_string_of_bytes(len(data), length=2)
 
         return name + answer_type + answer_class + ttl + length + data
+
+    @classmethod
+    def parse_header(cls, header: bytes) -> DNSHeader:
+        packet_id, flags1, _flags2, _qdcount, _ancount, _nsacount, _arcount = (
+            struct.unpack(cls.HEADER_FORMAT, header)
+        )
+        # Recall that OPCODE is shifted 3 positions to the left
+        # We need to shift it to the right before applying our mask
+        opcode = (flags1 >> 3) & 0b00001111
+        # RD is our least significant bit - no shifting required
+        rd_bit = flags1 & 0b00000001
+        # 0 (no error) if OPCODE is 0 (standard query) else 4 (not implemented)
+        rcode = 0 if opcode == 0 else 4
+
+        return DNSHeader(
+            packet_id=packet_id,
+            operation_code=opcode,
+            recursion_desired=rd_bit,
+            response_code=rcode,
+        )
 
     def _as_label_sequence(self, name: str) -> str:
         result = ""

@@ -15,13 +15,19 @@ def main():
     while True:
         try:
             buf, source = udp_socket.recvfrom(512)
+            # The DNS packet header is always 12 bytes in length
+            header = buf[:12]
 
-            message = DNSMessage()
-            header = message.create_header(question_count=1, answer_count=1)
+            query_header = DNSMessage.parse_header(header)
+            message = DNSMessage(packet_id=query_header.packet_id)
+
+            response_header = message.create_header(
+                query_header, question_count=1, answer_count=1
+            )
             question = message.create_question()
             answer = message.create_answer()
 
-            response = header + question.encode() + answer.encode()
+            response = response_header + question.encode() + answer.encode()
 
             udp_socket.sendto(response, source)
         except Exception as e:
