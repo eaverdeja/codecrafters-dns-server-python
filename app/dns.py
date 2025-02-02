@@ -32,8 +32,13 @@ class DNSMessage:
     # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.1
     TTL = 60
 
+    # https://www.rfc-editor.org/rfc/rfc1035#section-4.1.1
     HEADER_FORMAT = "!HBBHHHH"
     HEADER_SIZE = 12
+
+    # https://www.rfc-editor.org/rfc/rfc1035#section-4.1.4
+    IS_COMPRESSED_LABEL_MASK = 0b1100_0000
+    LABEL_POINTER_MASK = 0b0011_1111
 
     def __init__(self, packet_id: int, domain_name: str):
         self.ID = packet_id
@@ -151,29 +156,42 @@ class DNSMessage:
         )
 
     @classmethod
-    def parse_question(cls, question: bytes, offset: int) -> tuple[str, int]:
+    def parse_question(cls, packet: bytes, offset: int) -> tuple[str, int]:
         pieces = []
 
-        try:
-            while (length := question[offset]) != 0:
-                if length & 0b1100_0000:
-                    offset += 1
-                    new_offset = ((length & 0b0011_1111) << 8) | question[offset]
-                    pieces.append(cls.parse_question(question, new_offset)[0])
-                    # Skip the 4 bytes for TYPE and CLASS, plus a byte for the null terminator
-                    offset += 4 + 1
-                else:
-                    offset += 1
-                    data = question[offset : offset + length]
-                    pieces.append(data.decode())
-                    offset += length
-        except IndexError:
-            pass
+        # Labels end at a null byte
+        while (length := packet[offset]) != 0:
+            if offset + length >= len(packet) - 1:
+                # Avoid overflowing
+                break
+
+            if cls._is_compressed_label(length):
+                piece, offset = cls._follow_label_pointer(packet, offset, length)
+            else:
+                piece, offset = cls._decode_label(packet, offset, length)
+            pieces.append(piece)
 
         # Skip the 4 bytes for TYPE and CLASS, plus a byte for the null terminator
         offset += 4 + 1
 
         return ".".join(pieces), offset
+
+    @classmethod
+    def _is_compressed_label(cls, length: int) -> bool:
+        return bool(length & cls.IS_COMPRESSED_LABEL_MASK)
+
+    @classmethod
+    def _decode_label(cls, packet: bytes, offset: int, length: int) -> tuple[str, int]:
+        offset += 1
+        data = packet[offset : offset + length]
+        offset += length
+        return data.decode(), offset
+
+    @classmethod
+    def _follow_label_pointer(cls, packet: bytes, offset: int, length: int):
+        offset += 1
+        new_offset = ((length & cls.LABEL_POINTER_MASK) << 8) | packet[offset]
+        return cls.parse_question(packet, new_offset)
 
     def _as_label_sequence(self, name: str) -> str:
         result = ""
