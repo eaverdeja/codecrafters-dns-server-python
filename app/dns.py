@@ -40,10 +40,9 @@ class DNSMessage:
     IS_COMPRESSED_LABEL_MASK = 0b1100_0000
     LABEL_POINTER_MASK = 0b0011_1111
 
-    def __init__(self, packet_id: int, domain_name: str, indicator: int = 1):
+    def __init__(self, packet_id: int, indicator: int = 1):
         self.ID = packet_id
         self.QR = indicator
-        self.domain_name = domain_name
 
     def create_header(
         self, query_header: DNSHeader, question_count: int, answer_count: int
@@ -112,16 +111,16 @@ class DNSMessage:
             arcount,  # 16 bits
         )
 
-    def create_question(self) -> str:
-        name = self._as_label_sequence(self.domain_name)
+    def create_question(self, domain_name: str) -> str:
+        name = self._as_label_sequence(domain_name)
 
         question_type = self._as_string_of_bytes(self.TYPE, length=2)
         question_class = self._as_string_of_bytes(self.CLASS, length=2)
 
         return name + question_type + question_class
 
-    def create_answer(self) -> str:
-        name = self._as_label_sequence(self.domain_name)
+    def create_answer(self, domain_name: str) -> str:
+        name = self._as_label_sequence(domain_name)
 
         answer_type = self._as_string_of_bytes(self.TYPE, length=2)
         answer_class = self._as_string_of_bytes(self.CLASS, length=2)

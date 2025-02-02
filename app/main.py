@@ -18,22 +18,18 @@ def _run_server(udp_socket: socket.SocketType):
                 domain_name, offset = DNSMessage.parse_question(buf, offset=offset)
                 domain_names.append(domain_name)
 
-            response_header = DNSMessage(query_header.packet_id, "").create_header(
+            response_header = DNSMessage(query_header.packet_id).create_header(
                 query_header,
                 question_count=query_header.question_count,
                 answer_count=len(domain_names),
             )
-            messages = [
-                DNSMessage(packet_id=query_header.packet_id, domain_name=domain_name)
-                for domain_name in domain_names
-            ]
-            response = response_header
             questions, answers = [], []
-            for message in messages:
-                questions.append(message.create_question())
-            for message in messages:
-                answers.append(message.create_answer())
+            for domain_name in domain_names:
+                message = DNSMessage(packet_id=query_header.packet_id)
+                questions.append(message.create_question(domain_name))
+                answers.append(message.create_answer(domain_name))
 
+            response = response_header
             response += "".join(questions).encode()
             response += "".join(answers).encode()
 
@@ -52,15 +48,17 @@ def _run_forwarding_server(udp_socket: socket.SocketType, address: str, port: in
         query_header = DNSMessage.parse_header(header)
 
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
         if query_header.question_count > 1:
             offset = DNSMessage.HEADER_SIZE
+
             # Split questions
             answers = []
             for _ in range(query_header.question_count):
                 domain_name, offset = DNSMessage.parse_question(buf, offset=offset)
-                # Send question
+                # Question header
                 request_header = DNSMessage(
-                    query_header.packet_id, domain_name, indicator=0
+                    query_header.packet_id, indicator=0
                 ).create_header(
                     DNSHeader(
                         packet_id=query_header.packet_id,
@@ -74,18 +72,16 @@ def _run_forwarding_server(udp_socket: socket.SocketType, address: str, port: in
                 )
                 message = DNSMessage(
                     packet_id=query_header.packet_id,
-                    domain_name=domain_name,
                 )
-                request = request_header + message.create_question().encode()
+                request = request_header + message.create_question(domain_name).encode()
                 # Forward request
                 client_socket.sendto(request, (address, port))
 
                 # Receive
                 answers.append(client_socket.recv(512))
 
-            # Merge responses
-            print("answers: ", answers)
-            response_header = DNSMessage(query_header.packet_id, "").create_header(
+            # Build the response header with the updated answer count
+            response_header = DNSMessage(query_header.packet_id).create_header(
                 DNSHeader(
                     packet_id=query_header.packet_id,
                     operation_code=query_header.operation_code,
@@ -98,19 +94,17 @@ def _run_forwarding_server(udp_socket: socket.SocketType, address: str, port: in
             )
             final_response = response_header
 
+            # Merge answers back together with their respective questions
             for answer in answers:
                 # Question
                 offset = DNSMessage.HEADER_SIZE
                 domain_name, offset = DNSMessage.parse_question(answer, offset=offset)
-                message = DNSMessage(
-                    packet_id=query_header.packet_id, domain_name=domain_name
-                )
-                final_response += message.create_question().encode()
+                message = DNSMessage(packet_id=query_header.packet_id)
+                final_response += message.create_question(domain_name).encode()
                 # Answer
                 final_response += answer[DNSMessage.HEADER_SIZE :]
 
             # Forward
-            print("final response", final_response)
             udp_socket.sendto(final_response, source)
         else:
             # Forward buf as is
