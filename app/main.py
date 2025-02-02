@@ -17,21 +17,33 @@ def main():
             buf, source = udp_socket.recvfrom(512)
             # The DNS packet header is always 12 bytes in length
             header = buf[:12]
-            data = buf[12:]
 
             query_header = DNSMessage.parse_header(header)
-            domain_name = DNSMessage.parse_question(data)
-            message = DNSMessage(
-                packet_id=query_header.packet_id, domain_name=domain_name
-            )
 
-            response_header = message.create_header(
-                query_header, question_count=1, answer_count=1
-            )
-            question = message.create_question()
-            answer = message.create_answer()
+            offset = DNSMessage.HEADER_SIZE
+            domain_names = []
+            for _ in range(query_header.question_count):
+                domain_name, offset = DNSMessage.parse_question(buf, offset=offset)
+                domain_names.append(domain_name)
 
-            response = response_header + question.encode() + answer.encode()
+            response_header = DNSMessage.create_header(
+                query_header,
+                question_count=query_header.question_count,
+                answer_count=len(domain_names),
+            )
+            messages = [
+                DNSMessage(packet_id=query_header.packet_id, domain_name=domain_name)
+                for domain_name in domain_names
+            ]
+            response = response_header
+            questions, answers = [], []
+            for message in messages:
+                questions.append(message.create_question())
+            for message in messages:
+                answers.append(message.create_answer())
+
+            response += "".join(questions).encode()
+            response += "".join(answers).encode()
 
             udp_socket.sendto(response, source)
         except Exception as e:

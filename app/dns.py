@@ -8,6 +8,7 @@ class DNSHeader:
     operation_code: int
     recursion_desired: int
     response_code: int
+    question_count: int
 
 
 class DNSMessage:
@@ -32,13 +33,15 @@ class DNSMessage:
     TTL = 60
 
     HEADER_FORMAT = "!HBBHHHH"
+    HEADER_SIZE = 12
 
     def __init__(self, packet_id: int, domain_name: str):
         self.ID = packet_id
         self.domain_name = domain_name
 
+    @classmethod
     def create_header(
-        self, query_header: DNSHeader, question_count: int, answer_count: int
+        cls, query_header: DNSHeader, question_count: int, answer_count: int
     ) -> bytes:
         """
         Creates a 12-byte DNS header with the specified fields.
@@ -69,7 +72,7 @@ class DNSMessage:
         # 10001111  = 143 in decimal
         #
         flags1 = (
-            (self.QR << 7)
+            (cls.QR << 7)
             | (query_header.operation_code << 3)
             | (0 << 2)
             | (0 << 1)
@@ -94,8 +97,8 @@ class DNSMessage:
         # 'BB' means two 8-bit unsigned chars (for the flags)
         # HBBHHHH = H + 2B + 4H = 2*1 + 5*2 = 12 bytes
         return struct.pack(
-            self.HEADER_FORMAT,
-            self.ID,  # 16 bits
+            cls.HEADER_FORMAT,
+            query_header.packet_id,  # 16 bits
             flags1,  # 8 bits
             flags2,  # 8 bits
             qdcount,  # 16 bits
@@ -128,7 +131,7 @@ class DNSMessage:
 
     @classmethod
     def parse_header(cls, header: bytes) -> DNSHeader:
-        packet_id, flags1, _flags2, _qdcount, _ancount, _nsacount, _arcount = (
+        packet_id, flags1, _flags2, qdcount, _ancount, _nsacount, _arcount = (
             struct.unpack(cls.HEADER_FORMAT, header)
         )
         # Recall that OPCODE is shifted 3 positions to the left
@@ -144,19 +147,33 @@ class DNSMessage:
             operation_code=opcode,
             recursion_desired=rd_bit,
             response_code=rcode,
+            question_count=qdcount,
         )
 
     @classmethod
-    def parse_question(cls, question: bytes) -> str:
+    def parse_question(cls, question: bytes, offset: int) -> tuple[str, int]:
         pieces = []
-        bytes_read = 0
-        while (length := question[bytes_read]) != 0:
-            bytes_read += 1
-            data = question[bytes_read : bytes_read + length]
-            pieces.append(data.decode())
-            bytes_read += length
 
-        return ".".join(pieces)
+        try:
+            while (length := question[offset]) != 0:
+                if length & 0b1100_0000:
+                    offset += 1
+                    new_offset = ((length & 0b0011_1111) << 8) | question[offset]
+                    pieces.append(cls.parse_question(question, new_offset)[0])
+                    # Skip the 4 bytes for TYPE and CLASS, plus a byte for the null terminator
+                    offset += 4 + 1
+                else:
+                    offset += 1
+                    data = question[offset : offset + length]
+                    pieces.append(data.decode())
+                    offset += length
+        except IndexError:
+            pass
+
+        # Skip the 4 bytes for TYPE and CLASS, plus a byte for the null terminator
+        offset += 4 + 1
+
+        return ".".join(pieces), offset
 
     def _as_label_sequence(self, name: str) -> str:
         result = ""
