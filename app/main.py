@@ -1,7 +1,7 @@
 import socket
 from argparse import ArgumentParser
 
-from .dns import DNSMessage
+from .dns import DNSHeader, DNSMessage
 
 
 def _run_server(udp_socket: socket.SocketType):
@@ -18,7 +18,7 @@ def _run_server(udp_socket: socket.SocketType):
                 domain_name, offset = DNSMessage.parse_question(buf, offset=offset)
                 domain_names.append(domain_name)
 
-            response_header = DNSMessage.create_header(
+            response_header = DNSMessage(query_header.packet_id, "").create_header(
                 query_header,
                 question_count=query_header.question_count,
                 answer_count=len(domain_names),
@@ -48,19 +48,77 @@ def _run_forwarding_server(udp_socket: socket.SocketType, address: str, port: in
         # Receive
         buf, source = udp_socket.recvfrom(512)
 
-        # Split questions
-        ...
+        header = buf[: DNSMessage.HEADER_SIZE]
+        query_header = DNSMessage.parse_header(header)
 
-        # Forward
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client_socket.sendto(buf, (address, port))
+        if query_header.question_count > 1:
+            offset = DNSMessage.HEADER_SIZE
+            # Split questions
+            answers = []
+            for _ in range(query_header.question_count):
+                domain_name, offset = DNSMessage.parse_question(buf, offset=offset)
+                # Send question
+                request_header = DNSMessage(
+                    query_header.packet_id, domain_name, indicator=0
+                ).create_header(
+                    DNSHeader(
+                        packet_id=query_header.packet_id,
+                        operation_code=query_header.operation_code,
+                        recursion_desired=query_header.recursion_desired,
+                        response_code=query_header.response_code,
+                        question_count=1,
+                    ),
+                    question_count=1,
+                    answer_count=1,
+                )
+                message = DNSMessage(
+                    packet_id=query_header.packet_id,
+                    domain_name=domain_name,
+                )
+                request = request_header + message.create_question().encode()
+                # Forward request
+                client_socket.sendto(request, (address, port))
 
-        # Merge responses
-        ...
+                # Receive
+                answers.append(client_socket.recv(512))
 
-        # Respond
-        server_response = client_socket.recv(512)
-        udp_socket.sendto(server_response, source)
+            # Merge responses
+            print("answers: ", answers)
+            response_header = DNSMessage(query_header.packet_id, "").create_header(
+                DNSHeader(
+                    packet_id=query_header.packet_id,
+                    operation_code=query_header.operation_code,
+                    recursion_desired=query_header.recursion_desired,
+                    response_code=query_header.response_code,
+                    question_count=query_header.question_count,
+                ),
+                question_count=query_header.question_count,
+                answer_count=len(answers),
+            )
+            final_response = response_header
+
+            for answer in answers:
+                # Question
+                offset = DNSMessage.HEADER_SIZE
+                domain_name, offset = DNSMessage.parse_question(answer, offset=offset)
+                message = DNSMessage(
+                    packet_id=query_header.packet_id, domain_name=domain_name
+                )
+                final_response += message.create_question().encode()
+                # Answer
+                final_response += answer[DNSMessage.HEADER_SIZE :]
+
+            # Forward
+            print("final response", final_response)
+            udp_socket.sendto(final_response, source)
+        else:
+            # Forward buf as is
+            client_socket.sendto(buf, (address, port))
+            # Receive
+            server_response = client_socket.recv(512)
+            # Respond
+            udp_socket.sendto(server_response, source)
 
 
 def main():

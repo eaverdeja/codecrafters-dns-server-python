@@ -17,8 +17,8 @@ class DNSMessage:
 
     # Query/Response Indicator (QR)
     # 1 for a reply packet, 0 for a question packet.
-    # Since we're yielding replies, we keep this as 1.
-    QR = 1
+    # Since we're yielding replies, we default this to 1.
+    QR: int = 1
 
     # 1 stands for a host address question type (type A)
     # https://www.rfc-editor.org/rfc/rfc1035#section-3.2.2
@@ -40,13 +40,13 @@ class DNSMessage:
     IS_COMPRESSED_LABEL_MASK = 0b1100_0000
     LABEL_POINTER_MASK = 0b0011_1111
 
-    def __init__(self, packet_id: int, domain_name: str):
+    def __init__(self, packet_id: int, domain_name: str, indicator: int = 1):
         self.ID = packet_id
+        self.QR = indicator
         self.domain_name = domain_name
 
-    @classmethod
     def create_header(
-        cls, query_header: DNSHeader, question_count: int, answer_count: int
+        self, query_header: DNSHeader, question_count: int, answer_count: int
     ) -> bytes:
         """
         Creates a 12-byte DNS header with the specified fields.
@@ -77,7 +77,7 @@ class DNSMessage:
         # 10001111  = 143 in decimal
         #
         flags1 = (
-            (cls.QR << 7)
+            (self.QR << 7)
             | (query_header.operation_code << 3)
             | (0 << 2)
             | (0 << 1)
@@ -102,7 +102,7 @@ class DNSMessage:
         # 'BB' means two 8-bit unsigned chars (for the flags)
         # HBBHHHH = H + 2B + 4H = 2*1 + 5*2 = 12 bytes
         return struct.pack(
-            cls.HEADER_FORMAT,
+            self.HEADER_FORMAT,
             query_header.packet_id,  # 16 bits
             flags1,  # 8 bits
             flags2,  # 8 bits
@@ -175,6 +175,12 @@ class DNSMessage:
         offset += 4 + 1
 
         return ".".join(pieces), offset
+
+    @classmethod
+    def parse_answer(cls, packet: bytes, offset: int) -> tuple[str, int]:
+        print("packet ", packet)
+        print("offset ", offset)
+        return packet.decode(), offset
 
     @classmethod
     def _is_compressed_label(cls, length: int) -> bool:
